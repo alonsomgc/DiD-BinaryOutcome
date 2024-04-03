@@ -1,0 +1,308 @@
+---
+title: "To be, or not to be: Extending Difference-in-Differences to Binary Outcomes"
+author: "Alonso M. Guerrero Castañeda"
+format: html
+editor: visual
+---
+
+```{r setup}
+#| include: false
+
+library(tidyverse)
+library(latex2exp)
+
+```
+
+## Proposed estimator
+
+```{r}
+
+proposed_estimator = function(y0, y1, G, x1, x2, sample=FALSE){
+  
+  if (sample==TRUE){
+    # Generate random sample of index numbers
+    sample_indices <- sample(1:length(y0), 1000, replace = TRUE)
+    
+    # Subset each vector using the same index numbers
+    y0 <- y0[sample_indices]
+    y1 <- y1[sample_indices]
+    G <- G[sample_indices]
+    x1 <- x1[sample_indices]
+    x2 <- x2[sample_indices]
+  }
+  
+  tau1_est<-sum(G*y1)/sum(G)
+  data<-data.frame(y0,y1,G,x1,x2)
+  data$y0<-y0
+  data$y1<-y1
+  data$G<-G
+  data_ctr<-subset(data,G==0,drop=T)
+  
+  fm0<-as.formula(y0~x1+poly(x2,2,raw=T))
+  fm1<-as.formula(y1~x1+poly(x2,2,raw=T))
+  
+  mod1<-glm(fm1,data=data_ctr, family = "binomial")
+  mod0<-glm(fm0,data=data_ctr, family = "binomial")
+  mu1<-as.numeric(predict(mod1,newdata=data,type="response"))
+  mu0<-as.numeric(predict(mod0,newdata=data,type="response"))
+  
+  tau0_est<-sum(G*(y0 + mu1 - mu0))/sum(G)
+  att_est = tau1_est-tau0_est
+  
+  return(att_est)
+}
+
+```
+
+## Simulation
+
+```{r warning=FALSE}
+
+set.seed(1)
+
+true_effect = c()
+att_est_vect = c()
+bias_est_vect = c()
+coverage_est_vect = c()
+att_lm_vect = c()
+bias_lm_vect = c()
+coverage_lm_vect = c()
+#att_glm_vect = c()
+#bias_glm_vect = c()
+#coverage_glm_vect = c()
+proportion = c()
+
+k_vect = seq(-9,3,1)
+
+#for(k in c(-8,-7, 1,2)){
+for(k in k_vect){
+  
+  ## GROUND TRUTH 
+  # Simulate covariates
+  n=2000*1000
+  x1 = rbinom(n,1,0.25)   # binary
+  x2 = rep(NA,n)          # continuous
+  x2[x1==0] = rnorm(sum(x1==0),20,20)
+  x2[x1==1] = rnorm(sum(x1==1),80,20)
+  X = cbind(1,x1,x2,x2^2)
+  
+  # Propensity score model
+  gamma = c(-2,1,-0.02,0.0004)
+  p = plogis(c(X%*%gamma))
+  G = rbinom(n,1,p)
+  n1 = sum(G)            # number of treated individuals
+  n0 = n-n1              # number of control individuals
+  X0 = X[G==0,]
+  X1 = X[G==1,]
+  
+  # Outcome regression models
+  y0 = rep(NA,n)
+  y1 = rep(NA,n)
+  
+  beta00 = c(k,0.5,0.05,0)
+  mu00 = plogis(c(X0%*%beta00))
+  y0[G==0] = rbinom(n=n0, size=1, prob=mu00)
+  
+  beta01 = c(k-1,0.5,0.05,0)
+  mu01 = plogis(c(X1%*%beta01))
+  y0[G==1] = rbinom(n=n1, size=1, prob=mu01)
+  
+  beta10 = c(k-0.5,0.5,0.05,0)
+  mu10 = plogis(c(X0%*%beta10))
+  y1[G==0] = rbinom(n=n0, size=1, prob=mu10)
+  
+  beta11 = c(k,0.5,0.05,0)
+  mu11 = plogis(c(X1%*%beta11))
+  y1[G==1] = rbinom(n=n1, size=1, prob=mu11)
+  
+  mu11_cf = plogis(X1%*%beta10)+(plogis(X1%*%beta01)-plogis(X1%*%beta00))
+  
+  # true estimands
+  tau1 = mean(mu11)
+  tau0 = mean(mu11_cf)
+  ATT = mean(mu11)-mean(mu11_cf)
+  res = c(tau1=tau1,tau0=tau0,ATT=ATT)
+  
+  # SIMULATIONS
+  
+  n_samples = 200
+  n_boot = 1000
+  coverage = c()
+  coverage_lm = c()
+  point_estimates = c()
+  point_estimates_lm = c()
+  #coverage_glm = c()
+  #point_estimates_glm = c()
+  
+  
+  for(i in 1:n_samples){
+    
+    n=1000
+    x1 = rbinom(n,1,0.25)   # binary
+    x2 = rep(NA,n)          # continuous
+    x2[x1==0] = rnorm(sum(x1==0),20,20)
+    x2[x1==1] = rnorm(sum(x1==1),80,20)
+    X = cbind(1,x1,x2,x2^2)
+    
+    # Propensity score model
+    gamma = c(-2,1,-0.02,0.0004)
+    p = plogis(c(X%*%gamma))
+    G = rbinom(n,1,p)
+    n1 = sum(G)            # number of treated individuals
+    n0 = n-n1              # number of control individuals
+    X0 = X[G==0,]
+    X1 = X[G==1,]
+    
+    # Outcome regression models
+    y0 = rep(NA,n)
+    y1 = rep(NA,n)
+    
+    beta00 = c(k,0.5,0.05,0)
+    mu00 = plogis(c(X0%*%beta00))
+    y0[G==0] = rbinom(n=n0, size=1, prob=mu00)
+    
+    beta01 = c(k-1,0.5,0.05,0)
+    mu01 = plogis(c(X1%*%beta01))
+    y0[G==1] = rbinom(n=n1, size=1, prob=mu01)
+    
+    beta10 = c(k-0.5,0.5,0.05,0)
+    mu10 = plogis(c(X0%*%beta10))
+    y1[G==0] = rbinom(n=n0, size=1, prob=mu10)
+    
+    beta11 = c(k,0.5,0.05,0)
+    mu11 = plogis(c(X1%*%beta11))
+    y1[G==1] = rbinom(n=n1, size=1, prob=mu11)
+    
+    # Bootstrap procedure
+    boot_vector = c()
+    for (j in 1:n_boot) {
+      # Compute estimator on bootstrap sample
+      boot_estimate = proposed_estimator(y0, y1, G, x1, x2, sample=TRUE)
+      boot_vector = c(boot_vector, boot_estimate)
+    
+    }
+    lower = quantile(boot_vector, na.rm = T, probs = 0.025)
+    upper = quantile(boot_vector, na.rm = T, probs = 0.975)
+    coverage[i] = ifelse(lower <= ATT & ATT <= upper, 1, 0)
+    point_estimates[i] = proposed_estimator(y0, y1, G, x1, x2, sample=FALSE)
+    
+    # Estimation lm (wrong method)
+    data<-data.frame(y0,y1,G,x1,x2)
+    data$y0<-y0
+    data$y1<-y1
+    data$G<-G
+    
+    df_long = data %>%
+      pivot_longer(cols = starts_with("y"), names_to = "t", values_to = "y") %>%
+      mutate(t = str_extract(t, "\\d+"),  # Extract numeric part from column names
+             t = as.integer(t)) %>%
+      select(y, t, G, x1, x2)
+    
+    did_lm = lm(y ~ t*G + x1+poly(x2,2,raw=T), data=df_long)
+    att_lm = summary(did_lm)$coefficients["t:G", "Estimate"]
+    lower_lm = confint(did_lm)["t:G",1]
+    upper_lm = confint(did_lm)["t:G",2]
+    
+    coverage_lm[i] = ifelse(lower_lm <= ATT & ATT <= upper_lm, 1, 0)
+    point_estimates_lm[i] = att_lm
+    
+    # Estimation logistic (wrong method)
+    #did_glm = glm(y ~ t*G + x1+poly(x2,2,raw=T), family="binomial", data=df_long)
+    #att_glm = summary(did_glm)$coefficients["t:G", "Estimate"]
+    #lower_glm = confint(did_glm)["t:G",1]
+    #upper_glm = confint(did_glm)["t:G",2]
+    
+    #coverage_glm[i] = ifelse(lower_glm <= ATT & ATT <= upper_glm, 1, 0)
+    #point_estimates_glm[i] = att_glm
+    
+  }
+  
+  # Compute averages
+  coverage_probability = mean(coverage)
+  att_est = mean(point_estimates)
+  bias_est = att_est- ATT
+  # Compute averages
+  coverage_probability_lm = mean(coverage_lm)
+  att_lm = mean(point_estimates_lm)
+  bias_lm = att_lm - ATT
+  # Compute averages
+  #coverage_probability_glm = mean(coverage_glm)
+  #att_glm = mean(point_estimates_glm)
+  #bias_glm = att_glm - ATT  
+  
+  # Save results
+  true_effect = c(true_effect, ATT)
+  proportion = c(proportion, tau1)
+  # Proposed estimator
+  att_est_vect = c(att_est_vect, att_est)
+  bias_est_vect = c(bias_est_vect, bias_est)
+  coverage_est_vect = c(coverage_est_vect, coverage_probability)
+  # Linear estimator
+  att_lm_vect = c(att_lm_vect, att_lm)
+  bias_lm_vect = c(bias_lm_vect, bias_lm)
+  coverage_lm_vect = c(coverage_lm_vect, coverage_probability_lm)
+  # Linear estimator
+  #att_glm_vect = c(att_glm_vect, att_glm)
+  #bias_glm_vect = c(bias_glm_vect, bias_glm)
+  #coverage_glm_vect = c(coverage_glm_vect, coverage_probability_glm)
+  
+  print(k)
+  print(coverage_est_vect)
+  print(coverage_lm_vect)
+  #print(coverage_glm_vect)
+  
+}
+
+
+```
+
+```{r}
+
+df = tibble(k = k_vect,
+     theta1 = proportion,
+     bias_logistic = bias_est_vect,
+     bias_lm = bias_lm_vect,
+     true_effect = true_effect,
+     coverage_logistic = coverage_est_vect,
+     coverage_lm = coverage_lm_vect,
+ )
+save(df, file="df.Rda")
+
+simulation_results_df = df %>%
+  select(!starts_with("coverage_")) %>%
+  pivot_longer(cols = starts_with("bias_"), names_to = "method", values_to = "bias") %>%
+  mutate(method = ifelse(method=="bias_logistic", "Logistic Approach", "Linear Approach"))
+
+simulation_results_df %>%
+  ggplot(aes(x = theta1, y = bias, color = method, size = true_effect))+
+  geom_point()+
+  stat_smooth(method = lm, formula = y ~ splines::bs(x, 3), se = FALSE, geom='line', alpha=0.6)+
+  geom_hline(yintercept=0, linetype='dotted', col = 'black')+
+  labs(y = "Bias", x = TeX(r"( $\theta_1$ )"), color = "Method", title = "Bias vs Probability of success", size = "True ATT size")+
+  theme_bw()
+
+simulation_results_df %>%
+  mutate(rel_bias = bias/true_effect) %>%
+  #dplyr::filter(theta1 <= 0.99) %>%
+  ggplot(aes(x = theta1, y = rel_bias, color = method))+
+  geom_point()+
+  scale_y_continuous(labels = scales::percent) +
+  stat_smooth(method = lm, formula = y ~ splines::bs(x, 3), se = FALSE, geom='line', alpha=0.6)+
+  geom_hline(yintercept=0, linetype='dotted', col = 'black')+
+  labs(y = "Relative Bias", x = TeX(r"( $\theta_1$ )"), color = "Method", title = "Relative Bias vs Probability of success") +
+  theme_bw()
+
+h= 0.95
+df %>%
+  select(!starts_with("bias_")) %>% 
+  pivot_longer(cols = starts_with("coverage_"), names_to = "method", values_to = "coverage") %>%
+    mutate(method = ifelse(method=="coverage_logistic", "Logistic Approach", "Linear Approach"))%>%
+  ggplot(aes(x = theta1, y = coverage, color = method, size = true_effect))+
+  geom_point()+
+  ylim(0,1)+
+  labs(y = "Coverage", x = TeX(r"( $\theta_1$ )"), color = "Method", title = "Empirical Coverage (95% CI) vs Probability of success", size = "True ATT size")+ 
+  geom_hline(yintercept=0.95, linetype='dotted', col = 'black')+
+  annotate("text", x = 0.1, y = h, label = "95%", vjust = -0.5)+
+  #geom_text(aes(0,h,label = h, vjust = -1)) +
+  theme_bw()
+```
